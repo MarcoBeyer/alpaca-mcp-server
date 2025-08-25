@@ -1,6 +1,15 @@
 """
-OAuth 2.1 Authentication Module for Alpaca MCP Server
-Provides GitHub OAuth authentication with user email validation.
+DEPRECATED: OAuth 2.1 Authentication Module for Alpaca MCP Server
+
+This file is deprecated as of the new MCP-auth integration.
+OAuth authentication is now handled directly by the FastMCP server
+using the built-in MCP OAuth 2.1 framework with GitHubProvider.
+
+For the new OAuth implementation, see:
+- github_auth_provider.py - GitHub OAuth provider implementation  
+- alpaca_mcp_server.py - Integrated OAuth in main server
+
+This file is kept for backward compatibility but should not be used.
 """
 
 import os

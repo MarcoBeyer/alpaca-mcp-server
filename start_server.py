@@ -1,7 +1,17 @@
 #!/usr/bin/env python3
 """
-Alpaca MCP Server with OAuth 2.1 Launcher
-Starts both the MCP server and OAuth proxy when OAuth is enabled.
+DEPRECATED: Alpaca MCP Server with OAuth 2.1 Launcher
+
+This file is deprecated as of the new MCP-auth integration.
+OAuth authentication is now handled directly by the FastMCP server
+using the built-in MCP OAuth 2.1 framework with GitHubProvider.
+
+For the new OAuth implementation, simply run:
+python alpaca_mcp_server.py --transport http
+
+OAuth will be automatically enabled if the environment variables are configured.
+
+This file is kept for backward compatibility but should not be used.
 """
 
 import os

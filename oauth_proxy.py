@@ -1,6 +1,15 @@
 """
-OAuth Proxy Server for Alpaca MCP Server
-Acts as an authentication proxy between clients and the MCP server.
+DEPRECATED: OAuth Proxy Server for Alpaca MCP Server
+
+This file is deprecated as of the new MCP-auth integration.
+OAuth authentication is now handled directly by the FastMCP server
+using the built-in MCP OAuth 2.1 framework with GitHubProvider.
+
+For the new OAuth implementation, see:
+- github_auth_provider.py - GitHub OAuth provider implementation
+- alpaca_mcp_server.py - Integrated OAuth in main server
+
+This file is kept for backward compatibility but should not be used.
 """
 
 import asyncio

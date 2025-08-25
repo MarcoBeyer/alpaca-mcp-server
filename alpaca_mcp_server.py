@@ -58,6 +58,8 @@ from alpaca.trading.requests import (
 )
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.auth.settings import AuthSettings
+from github_auth_provider import create_github_provider_from_env
 
 # Configure Python path for local imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -131,16 +133,38 @@ class DefaultArgs:
 # Only parse arguments when running as main script, use defaults when imported
 args = DefaultArgs()
 
-# Initialize FastMCP server with intelligent log level detection
+# Initialize FastMCP server with intelligent log level detection and optional OAuth
 is_pycharm = detect_pycharm_environment()
 log_level = "ERROR" if is_pycharm else "INFO"
+
+# Setup GitHub OAuth if configured
+github_provider = None
+auth_settings = None
+
+oauth_enabled = os.getenv("OAUTH_ENABLED", "false").lower() == "true"
+if oauth_enabled:
+    github_provider = create_github_provider_from_env()
+    if github_provider:
+        base_url = os.getenv("OAUTH_BASE_URL", "http://localhost:8000")
+        auth_settings = AuthSettings(
+            issuer_url="https://github.com/login/oauth",
+            resource_server_url=base_url
+        )
 
 # Optional: Print detection result for debugging (only in non-PyCharm environments)
 # Only print when running as main script to avoid noise when imported
 if not is_pycharm and __name__ == "__main__":
-    print(f"MCP Server starting with transport={args.transport}, log_level={log_level} (PyCharm detected: {is_pycharm})")
+    oauth_status = "enabled" if github_provider else "disabled"
+    if oauth_enabled and not github_provider:
+        oauth_status = "disabled (missing config)"
+    print(f"MCP Server starting with transport={args.transport}, log_level={log_level}, OAuth={oauth_status} (PyCharm detected: {is_pycharm})")
 
-mcp = FastMCP("alpaca-trading", log_level=log_level)
+mcp = FastMCP(
+    "alpaca-trading", 
+    log_level=log_level,
+    auth_server_provider=github_provider,
+    auth=auth_settings
+)
 
 # Initialize Alpaca clients using environment variables
 # Import our .env file within the same directory
@@ -2445,20 +2469,6 @@ if __name__ == "__main__":
     
     # Setup transport configuration based on command line arguments
     transport_config = setup_transport_config(args)
-    
-    # Check if OAuth proxy should be used for HTTP transport
-    if args.transport in ["http", "sse"]:
-        from oauth_auth import OAuthConfig
-        oauth_config = OAuthConfig()
-        
-        if oauth_config.enabled and oauth_config.is_valid():
-            print("OAuth 2.1 authentication is enabled for HTTP transport.")
-            print("The server will require GitHub OAuth authentication.")
-            print(f"Only '{oauth_config.allowed_email}' is authorized to access the server.")
-            print("")
-            print("Starting MCP server with OAuth proxy...")
-            print("Note: The OAuth proxy will start on port 8001 (configurable) and proxy to the MCP server.")
-            print("Please access the server via the OAuth proxy URL instead of the direct MCP server URL.")
     
     try:
         # Run server with the specified transport
