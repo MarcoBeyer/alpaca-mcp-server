@@ -57,9 +57,9 @@ from alpaca.trading.requests import (
     UpdateWatchlistRequest,
 )
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.auth.settings import AuthSettings
-from github_auth_provider import create_github_provider_from_env
+from fastmcp import FastMCP
+from mcpauth import MCPAuth
+from mcpauth.config import AuthServerConfig, AuthorizationServerMetadata, AuthServerType
 
 # Configure Python path for local imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -138,32 +138,44 @@ is_pycharm = detect_pycharm_environment()
 log_level = "ERROR" if is_pycharm else "INFO"
 
 # Setup GitHub OAuth if configured
-github_provider = None
-auth_settings = None
+github_auth = None
 
 oauth_enabled = os.getenv("OAUTH_ENABLED", "false").lower() == "true"
 if oauth_enabled:
-    github_provider = create_github_provider_from_env()
-    if github_provider:
-        base_url = os.getenv("OAUTH_BASE_URL", "http://localhost:8000")
-        auth_settings = AuthSettings(
-            issuer_url="https://github.com/login/oauth",
-            resource_server_url=base_url
+    client_id = os.getenv("GITHUB_CLIENT_ID")
+    client_secret = os.getenv("GITHUB_CLIENT_SECRET")
+    base_url = os.getenv("OAUTH_BASE_URL", "http://localhost:8000")
+    
+    if client_id and client_secret:
+        # Configure GitHub OAuth using mcpauth
+        auth_server_config = AuthServerConfig(
+            metadata=AuthorizationServerMetadata(
+                issuer="https://github.com/login/oauth",
+                authorization_endpoint="https://github.com/login/oauth/authorize",
+                token_endpoint="https://github.com/login/oauth/access_token",
+                userinfo_endpoint="https://api.github.com/user",
+                scope_supported=["user:email"],
+                response_types_supported=["code"],
+                grant_types_supported=["authorization_code"],
+                token_endpoint_auth_methods_supported=["client_secret_post"],
+                code_challenge_methods_supported=["S256", "plain"]
+            ),
+            type=AuthServerType.OAUTH
         )
+        
+        github_auth = MCPAuth(server=auth_server_config)
 
 # Optional: Print detection result for debugging (only in non-PyCharm environments)
 # Only print when running as main script to avoid noise when imported
 if not is_pycharm and __name__ == "__main__":
-    oauth_status = "enabled" if github_provider else "disabled"
-    if oauth_enabled and not github_provider:
+    oauth_status = "enabled" if github_auth else "disabled"
+    if oauth_enabled and not github_auth:
         oauth_status = "disabled (missing config)"
     print(f"MCP Server starting with transport={args.transport}, log_level={log_level}, OAuth={oauth_status} (PyCharm detected: {is_pycharm})")
 
 mcp = FastMCP(
     "alpaca-trading", 
-    log_level=log_level,
-    auth_server_provider=github_provider,
-    auth=auth_settings
+    auth=github_auth
 )
 
 # Initialize Alpaca clients using environment variables
@@ -2475,13 +2487,13 @@ if __name__ == "__main__":
         if args.transport == "http":
             mcp.settings.host = transport_config["host"]
             mcp.settings.port = transport_config["port"]
-            mcp.run(transport="streamable-http")
+            mcp.run(transport="streamable-http", log_level=log_level)
         elif args.transport == "sse":
             mcp.settings.host = transport_config["host"]
             mcp.settings.port = transport_config["port"]
-            mcp.run(transport="sse")
+            mcp.run(transport="sse", log_level=log_level)
         else:
-            mcp.run(transport="stdio")
+            mcp.run(transport="stdio", log_level=log_level)
     except Exception as e:
         if args.transport in ["http", "sse"]:
             print(f"Error starting {args.transport} server: {e}")

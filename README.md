@@ -39,7 +39,7 @@ This is a Model Context Protocol (MCP) server implementation for Alpaca's Tradin
   - Query details for stocks, crypto, and other Alpaca-supported assets
   - Filter assets by status, class, exchange, and attributes
 - **OAuth 2.1 Authentication**
-  - GitHub OAuth integration for secure access control
+  - GitHub OAuth integration using mcpauth library for secure access control
   - Configurable user email restrictions
   - Session-based authentication for HTTP transport
 
@@ -145,7 +145,7 @@ python alpaca_mcp_server.py --transport http
 
 ### 4. OAuth 2.1 Authentication (Optional)
 
-For additional security when using HTTP transport, you can enable OAuth 2.1 authentication with GitHub. This uses the built-in MCP authentication framework with a custom GitHub provider.
+For additional security when using HTTP transport, you can enable OAuth 2.1 authentication with GitHub. This uses the mcpauth library for standards-compliant OAuth 2.1 integration.
 
 #### Setup GitHub OAuth Application
 
@@ -186,7 +186,7 @@ python alpaca_mcp_server.py --transport http
 - Only the specified email address in `OAUTH_ALLOWED_EMAIL` can authenticate
 - The OAuth authentication is built directly into the MCP server (no separate proxy needed)
 - Users will be redirected to GitHub OAuth on first access, then redirected back to continue
-- Authentication is handled by the MCP framework's built-in OAuth 2.1 support
+- Authentication is handled using the mcpauth library for standards-compliant OAuth 2.1
 
 ### 5. API Key Configuration for Live Trading
 
@@ -296,7 +296,7 @@ To use Alpaca MCP Server with Claude Desktop, please follow the steps below. The
 }
 ```
 
-**Note:** When OAuth is enabled, the authentication is handled automatically by the MCP server. Users will be redirected to GitHub for authentication on first access.
+**Note:** When OAuth is enabled, authentication is handled automatically using the mcpauth library. Users will be redirected to GitHub for authentication on first access.
 
 ### Claude Code Usage
 
