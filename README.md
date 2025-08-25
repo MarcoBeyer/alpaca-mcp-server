@@ -38,6 +38,10 @@ This is a Model Context Protocol (MCP) server implementation for Alpaca's Tradin
 - **Asset Search**
   - Query details for stocks, crypto, and other Alpaca-supported assets
   - Filter assets by status, class, exchange, and attributes
+- **OAuth 2.1 Authentication**
+  - GitHub OAuth integration for secure access control
+  - Configurable user email restrictions
+  - Session-based authentication for HTTP transport
 
 ## Getting Started
 ### 0. Prerequisites
@@ -139,7 +143,53 @@ python alpaca_mcp_server.py --transport http
 
 **Note:** For more information about MCP transport methods, see the [official MCP transport documentation](https://modelcontextprotocol.io/docs/concepts/transports).
 
-### 4. API Key Configuration for Live Trading
+### 4. OAuth 2.1 Authentication (Optional)
+
+For additional security when using HTTP transport, you can enable OAuth 2.1 authentication with GitHub. This requires users to authenticate with GitHub before accessing the MCP server.
+
+#### Setup GitHub OAuth Application
+
+1. Go to [GitHub Developer Settings](https://github.com/settings/applications/new)
+2. Create a new OAuth App with these settings:
+   - **Application name**: `Alpaca MCP Server` (or your preferred name)
+   - **Homepage URL**: `http://localhost:8001` (adjust if using different host/port)
+   - **Authorization callback URL**: `http://localhost:8001/auth/callback`
+3. Save the application and note down the **Client ID** and **Client Secret**
+
+#### Configure OAuth in .env file
+
+Add these OAuth settings to your `.env` file:
+
+```bash
+# OAuth 2.1 Configuration (for HTTP transport only)
+OAUTH_ENABLED=true
+GITHUB_CLIENT_ID="your_github_client_id"
+GITHUB_CLIENT_SECRET="your_github_client_secret"
+OAUTH_ALLOWED_EMAIL="mbeyer2@gmail.com"  # Only this email can access the server
+OAUTH_SECRET_KEY="your-strong-secret-key-for-sessions"
+OAUTH_REDIRECT_URL="http://localhost:8001/auth/callback"
+```
+
+#### Start Server with OAuth
+
+Use the enhanced start script that manages both the MCP server and OAuth proxy:
+
+```bash
+# Start with OAuth authentication (recommended for HTTP transport)
+python start_server.py --transport http
+
+# The OAuth proxy will run on port 8001 (configurable with --proxy-port)
+# Access the server at: http://localhost:8001
+```
+
+**Important OAuth Notes:**
+- OAuth only works with HTTP transport (not stdio)
+- Only the specified email address in `OAUTH_ALLOWED_EMAIL` can authenticate
+- The OAuth proxy runs on port 8001 by default, while the MCP server runs on port 8000
+- Always access the server via the OAuth proxy URL (port 8001) when OAuth is enabled
+- Generate a strong, unique `OAUTH_SECRET_KEY` for production use
+
+### 5. API Key Configuration for Live Trading
 
 This MCP server connects to Alpaca's **paper trading API** by default for safe testing.
 To enable **live trading with real funds**, update the following configuration files:
@@ -230,6 +280,24 @@ To use Alpaca MCP Server with Claude Desktop, please follow the steps below. The
   }
 }
 ```
+
+**For remote usage with OAuth authentication:**
+```json
+{
+  "mcpServers": {
+    "alpaca": {
+      "transport": "http",
+      "url": "http://your-server-ip:8001/mcp",
+      "env": {
+        "ALPACA_API_KEY": "your_alpaca_api_key_for_paper_account",
+        "ALPACA_SECRET_KEY": "your_alpaca_secret_key_for_paper_account"
+      }
+    }
+  }
+}
+```
+
+**Note:** When OAuth is enabled, use port 8001 (OAuth proxy) instead of 8000 (direct MCP server). The OAuth proxy will handle authentication and forward requests to the MCP server.
 
 ### Claude Code Usage
 

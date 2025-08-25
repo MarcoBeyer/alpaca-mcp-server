@@ -2446,6 +2446,20 @@ if __name__ == "__main__":
     # Setup transport configuration based on command line arguments
     transport_config = setup_transport_config(args)
     
+    # Check if OAuth proxy should be used for HTTP transport
+    if args.transport in ["http", "sse"]:
+        from oauth_auth import OAuthConfig
+        oauth_config = OAuthConfig()
+        
+        if oauth_config.enabled and oauth_config.is_valid():
+            print("OAuth 2.1 authentication is enabled for HTTP transport.")
+            print("The server will require GitHub OAuth authentication.")
+            print(f"Only '{oauth_config.allowed_email}' is authorized to access the server.")
+            print("")
+            print("Starting MCP server with OAuth proxy...")
+            print("Note: The OAuth proxy will start on port 8001 (configurable) and proxy to the MCP server.")
+            print("Please access the server via the OAuth proxy URL instead of the direct MCP server URL.")
+    
     try:
         # Run server with the specified transport
         if args.transport == "http":
@@ -2467,6 +2481,8 @@ if __name__ == "__main__":
             print(f"2. Check if another service is using port {transport_config['port']}")
             print("3. Try using a different port with --port <PORT>")
             print("4. For remote access, consider using SSH tunneling or reverse proxy")
+            if args.transport == "http":
+                print("5. If OAuth is enabled, use the OAuth proxy server (oauth_proxy.py)")
         else:
             print(f"Error starting MCP server: {e}")
         sys.exit(1)
