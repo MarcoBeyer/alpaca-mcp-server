@@ -122,7 +122,8 @@ if oauth_enabled:
             client_id=client_id,
             client_secret=client_secret,
             base_url=base_url,
-            redirect_path=redirect_path
+            redirect_path=redirect_path,
+            required_scopes=["read:user", "user:email"]
         )
         from mcp.server.auth.settings import ClientRegistrationOptions
         if not github_auth.client_registration_options:
