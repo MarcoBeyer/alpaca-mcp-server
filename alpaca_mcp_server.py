@@ -66,7 +66,7 @@ from alpaca.trading.requests import (
     UpdateWatchlistRequest,
 )
 
-from fastmcp import FastMCP, settings as fastmcp_settings
+from fastmcp import FastMCP
 from fastmcp.server.auth.providers.github import GitHubProvider
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.exceptions import ToolError
@@ -114,13 +114,15 @@ if oauth_enabled:
     client_id = os.getenv("GITHUB_CLIENT_ID")
     client_secret = os.getenv("GITHUB_CLIENT_SECRET")
     base_url = os.getenv("OAUTH_BASE_URL", "http://localhost:8000")
+    redirect_path = os.getenv("OAUTH_REDIRECT_PATH", "/auth/callback")
     if not client_id or not client_secret:
         print("Missing GitHub OAuth configuration. Disabling OAuth.")
     else:
         github_auth = GitHubProvider(
             client_id=client_id,
             client_secret=client_secret,
-            base_url=base_url
+            base_url=base_url,
+            redirect_path=redirect_path
         )
 
 # Optional: Print detection result for debugging (only in non-PyCharm environments)
