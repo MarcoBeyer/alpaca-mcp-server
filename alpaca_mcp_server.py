@@ -2,7 +2,6 @@ import os
 import re
 import sys
 import time
-import argparse
 from datetime import datetime, timedelta, date
 from typing import Dict, Any, List, Optional, Union, cast
 
@@ -100,64 +99,12 @@ def detect_pycharm_environment():
     mcp_client = os.getenv("MCP_CLIENT", "").lower()
     return mcp_client == "pycharm"
 
-def parse_arguments():
-    """Parse command line arguments for transport configuration."""
-    parser = argparse.ArgumentParser(description="Alpaca MCP Server")
-    parser.add_argument(
-        "--transport",
-        choices=["stdio", "http", "sse"],
-        default="stdio",
-        help="Transport method to use (default: stdio). Note: WebSocket not supported, use HTTP for remote connections"
-    )
-    parser.add_argument(
-        "--host",
-        default="127.0.0.1",
-        help="Host to bind the server to for HTTP/SSE transport (default: 127.0.0.1)"
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help="Port to bind the server to for HTTP/SSE transport (default: 8000)"
-    )
-    return parser.parse_args()
-
-def setup_transport_config(args):
-    """Setup transport configuration based on command line arguments."""
-    if args.transport == "http":
-        return {
-            "transport": "http",
-            "host": args.host,
-            "port": args.port
-        }
-    elif args.transport == "sse":
-        print(f"Warning: SSE transport is deprecated. Consider using HTTP transport instead.")
-        return {
-            "transport": "sse",
-            "host": args.host,
-            "port": args.port
-        }
-    else:
-        return {
-            "transport": "stdio"
-        }
-
-# Default args for when module is imported (not run directly)
-class DefaultArgs:
-    def __init__(self):
-        self.transport = "stdio"
-        # host and port are only set when needed (via argument parsing)
-
-# Only parse arguments when running as main script, use defaults when imported
-args = DefaultArgs()
-
 # Initialize Alpaca clients using environment variables
 # Import our .env file within the same directory
 load_dotenv()
 
 # Initialize FastMCP server with intelligent log level detection and optional OAuth
 is_pycharm = detect_pycharm_environment()
-log_level = "ERROR" if is_pycharm else "INFO"
 
 # Setup GitHub OAuth if configured
 github_auth = None
@@ -182,7 +129,7 @@ if not is_pycharm and __name__ == "__main__":
     oauth_status = "enabled" if github_auth else "disabled"
     if oauth_enabled and not github_auth:
         oauth_status = "disabled (missing config)"
-    print(f"MCP Server starting with transport={args.transport}, log_level={log_level}, OAuth={oauth_status} (PyCharm detected: {is_pycharm})")
+    print(f"MCP Server starting with OAuth={oauth_status} (PyCharm detected: {is_pycharm})")
 
 print(f"OAuth Enabled: {oauth_enabled} and GitHub Auth: {github_auth is not None}")
 mcp = FastMCP(
@@ -2494,35 +2441,17 @@ def parse_timeframe_with_enums(timeframe_str: str) -> Optional[TimeFrame]:
 
 # Run the server
 if __name__ == "__main__":
-    # Parse command line arguments when running as main script
-    args = parse_arguments()
-    
-    # Setup transport configuration based on command line arguments
-    transport_config = setup_transport_config(args)
-    
+    host = os.getenv("FASTMCP_HOST", "127.0.0.1")
+    port = int(os.getenv("FASTMCP_PORT", "8000"))
     try:
-        # Run server with the specified transport
-        if args.transport == "http":
-            fastmcp_settings.host = transport_config["host"]
-            fastmcp_settings.port = int(transport_config["port"])
-            mcp.run(transport="streamable-http", log_level=log_level)
-        elif args.transport == "sse":
-            fastmcp_settings.host = transport_config["host"]
-            fastmcp_settings.port = int(transport_config["port"])
-            mcp.run(transport="sse", log_level=log_level)
-        else:
-            mcp.run(transport="stdio", log_level=log_level)
+        mcp.run(transport='http', host=host, port=port)
     except Exception as e:
-        if args.transport in ["http", "sse"]:
-            print(f"Error starting {args.transport} server: {e}")
-            print(f"Server was configured to run on {transport_config['host']}:{transport_config['port']}")
-            print("Common solutions:")
-            print(f"1. Ensure port {transport_config['port']} is available")
-            print(f"2. Check if another service is using port {transport_config['port']}")
-            print("3. Try using a different port with --port <PORT>")
-            print("4. For remote access, consider using SSH tunneling or reverse proxy")
-            if args.transport == "http":
-                print("5. If OAuth is enabled, use the OAuth proxy server (oauth_proxy.py)")
-        else:
-            print(f"Error starting MCP server: {e}")
+        print(f"Error starting server: {e}")
+        print(f"Server was configured to run on {host}:{port}")
+        print("Common solutions:")
+        print(f"1. Ensure port {port} is available")
+        print(f"2. Check if another service is using port {port}")
+        print("3. Try using a different port with --port <PORT>")
+        print("4. For remote access, consider using SSH tunneling or reverse proxy")
+        print("5. If OAuth is enabled, use the OAuth proxy server (oauth_proxy.py)")
         sys.exit(1)
