@@ -124,6 +124,13 @@ if oauth_enabled:
             base_url=base_url,
             redirect_path=redirect_path
         )
+        from mcp.server.auth.settings import ClientRegistrationOptions
+        if not github_auth.client_registration_options:
+            github_auth.client_registration_options = ClientRegistrationOptions()
+        github_auth.client_registration_options.enabled = True
+        github_auth.client_registration_options.default_scopes = ["user"]
+        github_auth.client_registration_options.valid_scopes = ["read:user", "user:email", "user"]
+        github_auth._allowed_client_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
 
 # Optional: Print detection result for debugging (only in non-PyCharm environments)
 # Only print when running as main script to avoid noise when imported
@@ -144,7 +151,7 @@ TRADE_API_KEY = os.getenv("ALPACA_API_KEY")
 TRADE_API_SECRET = os.getenv("ALPACA_SECRET_KEY")
 ALPACA_PAPER_TRADE = os.getenv("ALPACA_PAPER_TRADE", "True")
 TRADE_API_URL = os.getenv("TRADE_API_URL")
-TRDE_API_WSS = os.getenv("TRDE_API_WSS")
+TRADE_API_WSS = os.getenv("TRADE_API_WSS")
 DATA_API_URL = os.getenv("DATA_API_URL")
 STREAM_DATA_WSS = os.getenv("STREAM_DATA_WSS")
 
