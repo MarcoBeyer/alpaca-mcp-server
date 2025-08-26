@@ -4,28 +4,28 @@ import sys
 import time
 import argparse
 from datetime import datetime, timedelta, date
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, cast
 
 from dotenv import load_dotenv
 
-from alpaca.common.enums import SupportedCurrencies
+from alpaca.common.enums import SupportedCurrencies, Sort
 from alpaca.common.exceptions import APIError
 from alpaca.data.enums import DataFeed, OptionsFeed, CorporateActionsType
 from alpaca.data.historical.option import OptionHistoricalDataClient
-from alpaca.data.historical.stock import StockHistoricalDataClient, StockLatestTradeRequest
+from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.historical.corporate_actions import CorporateActionsClient
+from alpaca.data.models.corporate_actions import CorporateActionsSet
 from alpaca.data.live.stock import StockDataStream
+from alpaca.data.models import TradeSet
 from alpaca.data.requests import (
     OptionLatestQuoteRequest,
     OptionSnapshotRequest,
-    Sort,
     StockBarsRequest,
     StockLatestBarRequest,
     StockLatestQuoteRequest,
     StockLatestTradeRequest,
     StockSnapshotRequest,
     StockTradesRequest,
-    OptionChainRequest,
     CorporateActionsRequest
 )
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
@@ -36,12 +36,22 @@ from alpaca.trading.enums import (
     OrderClass,
     OrderSide,
     OrderType,
-    PositionIntent,
     QueryOrderStatus,
     TimeInForce,
 )
-from alpaca.trading.models import Order
+from alpaca.trading.models import (
+    Position, 
+    Order, 
+    TradeAccount, 
+    ClosePositionResponse, 
+    OptionContractsResponse, 
+    Watchlist, 
+    Asset, 
+    Clock, 
+    Calendar
+)
 from alpaca.trading.requests import (
+    CancelOrderResponse,
     ClosePositionRequest,
     CreateWatchlistRequest,
     GetAssetsRequest,
@@ -57,15 +67,11 @@ from alpaca.trading.requests import (
     UpdateWatchlistRequest,
 )
 
-from fastmcp import FastMCP
-from mcpauth import MCPAuth
-from mcpauth.config import AuthServerConfig, AuthorizationServerMetadata, AuthServerType
+from fastmcp import FastMCP, settings as fastmcp_settings
+from fastmcp.server.auth.providers.github import GitHubProvider
+from fastmcp.server.middleware import Middleware, MiddlewareContext
+from fastmcp.exceptions import ToolError
 
-# Configure Python path for local imports
-current_dir = os.path.dirname(os.path.abspath(__file__))
-github_core_path = os.path.join(current_dir, '.github', 'core')
-if github_core_path not in sys.path:
-    sys.path.insert(0, github_core_path)
 # Import the UserAgentMixin
 from user_agent_mixin import UserAgentMixin
 # Define new classes using the mixin
@@ -73,6 +79,18 @@ class TradingClientSigned(UserAgentMixin, TradingClient): pass
 class StockHistoricalDataClientSigned(UserAgentMixin, StockHistoricalDataClient): pass
 class OptionHistoricalDataClientSigned(UserAgentMixin, OptionHistoricalDataClient): pass
 class CorporateActionsClientSigned(UserAgentMixin, CorporateActionsClient): pass
+
+class AuthMiddleware(Middleware):
+    async def on_call_tool(self, context: MiddlewareContext, call_next):
+        from fastmcp.server.dependencies import get_access_token
+        token = get_access_token()
+        
+        # Deny access to restricted tools if not matching user mails env
+        if token and token.claims.get("email") not in os.getenv("ALLOWED_EMAILS", "").split(","):
+            raise ToolError("Access denied: tool requires to be in ALLOWED_EMAILS")
+        
+        # Allow other tools to proceed
+        return await call_next(context)
 
 def detect_pycharm_environment():
     """
@@ -133,6 +151,10 @@ class DefaultArgs:
 # Only parse arguments when running as main script, use defaults when imported
 args = DefaultArgs()
 
+# Initialize Alpaca clients using environment variables
+# Import our .env file within the same directory
+load_dotenv()
+
 # Initialize FastMCP server with intelligent log level detection and optional OAuth
 is_pycharm = detect_pycharm_environment()
 log_level = "ERROR" if is_pycharm else "INFO"
@@ -145,25 +167,14 @@ if oauth_enabled:
     client_id = os.getenv("GITHUB_CLIENT_ID")
     client_secret = os.getenv("GITHUB_CLIENT_SECRET")
     base_url = os.getenv("OAUTH_BASE_URL", "http://localhost:8000")
-    
-    if client_id and client_secret:
-        # Configure GitHub OAuth using mcpauth
-        auth_server_config = AuthServerConfig(
-            metadata=AuthorizationServerMetadata(
-                issuer="https://github.com/login/oauth",
-                authorization_endpoint="https://github.com/login/oauth/authorize",
-                token_endpoint="https://github.com/login/oauth/access_token",
-                userinfo_endpoint="https://api.github.com/user",
-                scope_supported=["user:email"],
-                response_types_supported=["code"],
-                grant_types_supported=["authorization_code"],
-                token_endpoint_auth_methods_supported=["client_secret_post"],
-                code_challenge_methods_supported=["S256", "plain"]
-            ),
-            type=AuthServerType.OAUTH
+    if not client_id or not client_secret:
+        print("Missing GitHub OAuth configuration. Disabling OAuth.")
+    else:
+        github_auth = GitHubProvider(
+            client_id=client_id,
+            client_secret=client_secret,
+            base_url=base_url
         )
-        
-        github_auth = MCPAuth(server=auth_server_config)
 
 # Optional: Print detection result for debugging (only in non-PyCharm environments)
 # Only print when running as main script to avoid noise when imported
@@ -173,14 +184,12 @@ if not is_pycharm and __name__ == "__main__":
         oauth_status = "disabled (missing config)"
     print(f"MCP Server starting with transport={args.transport}, log_level={log_level}, OAuth={oauth_status} (PyCharm detected: {is_pycharm})")
 
+print(f"OAuth Enabled: {oauth_enabled} and GitHub Auth: {github_auth is not None}")
 mcp = FastMCP(
     "alpaca-trading", 
     auth=github_auth
 )
-
-# Initialize Alpaca clients using environment variables
-# Import our .env file within the same directory
-load_dotenv()
+mcp.add_middleware(AuthMiddleware())
 
 TRADE_API_KEY = os.getenv("ALPACA_API_KEY")
 TRADE_API_SECRET = os.getenv("ALPACA_SECRET_KEY")
@@ -209,6 +218,12 @@ option_historical_data_client = OptionHistoricalDataClientSigned(api_key=TRADE_A
 # For corporate actions data
 corporate_actions_client = CorporateActionsClientSigned(api_key=TRADE_API_KEY, secret_key=TRADE_API_SECRET)
 
+def _to_float(val: Optional[Union[str, float, int]]) -> float:
+    try:
+        return float(val) if val is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
 # ============================================================================
 # Account Information Tools
 # ============================================================================
@@ -231,22 +246,22 @@ async def get_account_info() -> str:
             - Pattern Day Trader Status
             - Day Trades Remaining
     """
-    account = trade_client.get_account()
-    
+    account = cast(TradeAccount, trade_client.get_account())
+
     info = f"""
             Account Information:
             -------------------
             Account ID: {account.id}
             Status: {account.status}
             Currency: {account.currency}
-            Buying Power: ${float(account.buying_power):.2f}
-            Cash: ${float(account.cash):.2f}
-            Portfolio Value: ${float(account.portfolio_value):.2f}
-            Equity: ${float(account.equity):.2f}
-            Long Market Value: ${float(account.long_market_value):.2f}
-            Short Market Value: ${float(account.short_market_value):.2f}
+            Buying Power: ${_to_float(account.buying_power):.2f}
+            Cash: ${_to_float(account.cash):.2f}
+            Portfolio Value: ${_to_float(account.portfolio_value):.2f}
+            Equity: ${_to_float(account.equity):.2f}
+            Long Market Value: ${_to_float(account.long_market_value):.2f}
+            Short Market Value: ${_to_float(account.short_market_value):.2f}
             Pattern Day Trader: {'Yes' if account.pattern_day_trader else 'No'}
-            Day Trades Remaining: {account.daytrade_count if hasattr(account, 'daytrade_count') else 'Unknown'}
+            Day Trades Remaining: {account.daytrade_count}
             """
     return info
 
@@ -271,13 +286,14 @@ async def get_positions() -> str:
     
     result = "Current Positions:\n-------------------\n"
     for position in positions:
+        position = cast(Position, position)
         result += f"""
                     Symbol: {position.symbol}
                     Quantity: {position.qty} shares
-                    Market Value: ${float(position.market_value):.2f}
-                    Average Entry Price: ${float(position.avg_entry_price):.2f}
-                    Current Price: ${float(position.current_price):.2f}
-                    Unrealized P/L: ${float(position.unrealized_pl):.2f} ({float(position.unrealized_plpc) * 100:.2f}%)
+                    Market Value: ${_to_float(position.market_value):.2f}
+                    Average Entry Price: ${_to_float(position.avg_entry_price):.2f}
+                    Current Price: ${_to_float(position.current_price):.2f}
+                    Unrealized P/L: ${_to_float(position.unrealized_pl):.2f} ({_to_float(position.unrealized_plpc) * 100:.2f}%)
                     -------------------
                     """
     return result
@@ -294,8 +310,8 @@ async def get_open_position(symbol: str) -> str:
         str: Formatted string containing the position details or an error message
     """
     try:
-        position = trade_client.get_open_position(symbol)
-        
+        position = cast(Position, trade_client.get_open_position(symbol))
+
         # Check if it's an options position by looking for the options symbol pattern
         is_option = len(symbol) > 6 and any(c in symbol for c in ['C', 'P'])
         
@@ -306,10 +322,10 @@ async def get_open_position(symbol: str) -> str:
                 Position Details for {symbol}:
                 ---------------------------
                 Quantity: {quantity_text}
-                Market Value: ${float(position.market_value):.2f}
-                Average Entry Price: ${float(position.avg_entry_price):.2f}
-                Current Price: ${float(position.current_price):.2f}
-                Unrealized P/L: ${float(position.unrealized_pl):.2f}
+                Market Value: ${_to_float(position.market_value):.2f}
+                Average Entry Price: ${_to_float(position.avg_entry_price):.2f}
+                Current Price: ${_to_float(position.current_price):.2f}
+                Unrealized P/L: ${_to_float(position.unrealized_pl):.2f}
                 """ 
     except Exception as e:
         return f"Error fetching position: {str(e)}"
@@ -431,7 +447,7 @@ async def get_stock_bars(
         
         bars = stock_historical_data_client.get_stock_bars(request_params)
         
-        if bars[symbol]:
+        if bars[symbol] and start_time:
             time_range = f"{start_time.strftime('%Y-%m-%d %H:%M')} to {end_time.strftime('%Y-%m-%d %H:%M')}"
             result = f"Historical Data for {symbol} ({timeframe} bars, {time_range}):\n"
             result += "---------------------------------------------------\n"
@@ -493,16 +509,16 @@ async def get_stock_trades(
         )
         
         # Get the trades
-        trades = stock_historical_data_client.get_stock_trades(request_params)
-        
-        if symbol in trades:
+        trades = cast(TradeSet, stock_historical_data_client.get_stock_trades(request_params))
+
+        if symbol in trades.data:
             result = f"Historical Trades for {symbol} (Last {days} days):\n"
             result += "---------------------------------------------------\n"
-            
-            for trade in trades[symbol]:
+
+            for trade in trades.data[symbol]:
                 result += f"""
                     Time: {trade.timestamp}
-                    Price: ${float(trade.price):.6f}
+                    Price: ${_to_float(trade.price):.6f}
                     Size: {trade.size}
                     Exchange: {trade.exchange}
                     ID: {trade.id}
@@ -777,6 +793,7 @@ async def get_orders(status: str = "all", limit: int = 10) -> str:
         result += "-----------------------------------\n"
         
         for order in orders:
+            order = cast(Order, order)
             result += f"""
                         Symbol: {order.symbol}
                         ID: {order.id}
@@ -805,12 +822,12 @@ async def place_stock_order(
     quantity: float,
     order_type: str = "market",
     time_in_force: str = "day",
-    limit_price: float = None,
-    stop_price: float = None,
-    trail_price: float = None,
-    trail_percent: float = None,
+    limit_price: float | None = None,
+    stop_price: float | None = None,
+    trail_price: float | None = None,
+    trail_percent: float | None = None,
     extended_hours: bool = False,
-    client_order_id: str = None
+    client_order_id: str | None = None
 ) -> str:
     """
     Places an order of any supported type (MARKET, LIMIT, STOP, STOP_LIMIT, TRAILING_STOP) using the correct Alpaca request class.
@@ -935,7 +952,7 @@ async def place_stock_order(
             return f"Invalid order type: {order_type}. Must be one of: MARKET, LIMIT, STOP, STOP_LIMIT, TRAILING_STOP."
 
         # Submit order
-        order = trade_client.submit_order(order_data)
+        order = cast(Order, trade_client.submit_order(order_data))
         return f"""
                 Stock Order Placed Successfully:
                 --------------------------------
@@ -1079,7 +1096,7 @@ async def place_crypto_order(
         else:
             return "Invalid order type for crypto. Use: market, limit, stop_limit."
 
-        order = trade_client.submit_order(order_data)
+        order = cast(Order, trade_client.submit_order(order_data))
 
         return f"""
                 Crypto Order Placed Successfully:
@@ -1133,8 +1150,8 @@ async def cancel_all_orders() -> str:
     """
     try:
         # Cancel all orders
-        cancel_responses = trade_client.cancel_orders()
-        
+        cancel_responses = cast(List[CancelOrderResponse], trade_client.cancel_orders())
+
         if not cancel_responses:
             return "No orders were found to cancel."
         
@@ -1215,8 +1232,8 @@ async def close_position(symbol: str, qty: Optional[str] = None, percentage: Opt
             )
         
         # Close the position
-        order = trade_client.close_position(symbol, close_options)
-        
+        order = cast(Order, trade_client.close_position(symbol, close_options))
+
         return f"""
                 Position Closed Successfully:
                 ----------------------------
@@ -1256,8 +1273,8 @@ async def close_all_positions(cancel_orders: bool = False) -> str:
     """
     try:
         # Close all positions
-        close_responses = trade_client.close_all_positions(cancel_orders=cancel_orders)
-        
+        close_responses = cast(List[ClosePositionResponse], trade_client.close_all_positions(cancel_orders=cancel_orders))
+
         if not close_responses:
             return "No positions were found to close."
         
@@ -1317,7 +1334,7 @@ async def get_asset_info(symbol: str) -> str:
             - Trading Properties
     """
     try:
-        asset = trade_client.get_asset(symbol)
+        asset = cast(Asset, trade_client.get_asset(symbol))
         return f"""
                 Asset Information for {symbol}:
                 ----------------------------
@@ -1362,8 +1379,8 @@ async def get_all_assets(
             )
         
         # Get all assets
-        assets = trade_client.get_all_assets(filter_params)
-        
+        assets = cast(List[Asset], trade_client.get_all_assets(filter_params))
+
         if not assets:
             return "No assets found matching the criteria."
         
@@ -1403,8 +1420,8 @@ async def create_watchlist(name: str, symbols: List[str]) -> str:
     """
     try:
         watchlist_data = CreateWatchlistRequest(name=name, symbols=symbols)
-        watchlist = trade_client.create_watchlist(watchlist_data)
-        return f"Watchlist '{name}' created successfully with {len(symbols)} symbols."
+        watchlist = cast(Watchlist, trade_client.create_watchlist(watchlist_data))
+        return f"Watchlist '{watchlist.name}' created successfully with {len(symbols)} symbols."
     except Exception as e:
         return f"Error creating watchlist: {str(e)}"
 
@@ -1412,7 +1429,7 @@ async def create_watchlist(name: str, symbols: List[str]) -> str:
 async def get_watchlists() -> str:
     """Get all watchlists for the account."""
     try:
-        watchlists = trade_client.get_watchlists()
+        watchlists = cast(List[Watchlist], trade_client.get_watchlists())
         result = "Watchlists:\n------------\n"
         for wl in watchlists:
             result += f"Name: {wl.name}\n"
@@ -1426,11 +1443,11 @@ async def get_watchlists() -> str:
         return f"Error fetching watchlists: {str(e)}"
 
 @mcp.tool()
-async def update_watchlist(watchlist_id: str, name: str = None, symbols: List[str] = None) -> str:
+async def update_watchlist(watchlist_id: str, name: str | None = None, symbols: List[str] | None = None) -> str:
     """Update an existing watchlist."""
     try:
         update_request = UpdateWatchlistRequest(name=name, symbols=symbols)
-        watchlist = trade_client.update_watchlist_by_id(watchlist_id, update_request)
+        watchlist = cast(Watchlist, trade_client.update_watchlist_by_id(watchlist_id, update_request))
         return f"Watchlist updated successfully: {watchlist.name}"
     except Exception as e:
         return f"Error updating watchlist: {str(e)}"
@@ -1452,7 +1469,7 @@ async def get_market_clock() -> str:
             - Next Close Time
     """
     try:
-        clock = trade_client.get_clock()
+        clock = cast(Clock, trade_client.get_clock())
         return f"""
                 Market Status:
                 -------------
@@ -1483,8 +1500,8 @@ async def get_market_calendar(start_date: str, end_date: str) -> str:
         
         # Create the request object with the correct parameters
         calendar_request = GetCalendarRequest(start=start_dt, end=end_dt)
-        calendar = trade_client.get_calendar(calendar_request)
-        
+        calendar = cast(List[Calendar], trade_client.get_calendar(calendar_request))
+
         result = f"Market Calendar ({start_date} to {end_date}):\n----------------------------\n"
         for day in calendar:
             result += f"Date: {day.date}, Open: {day.open}, Close: {day.close}\n"
@@ -1551,10 +1568,10 @@ async def get_corporate_announcements(
             end=end,
             ids=ids,
             limit=limit,
-            sort=sort
+            sort=cast(Sort, sort)
         )
-        announcements = corporate_actions_client.get_corporate_actions(request)
-        
+        announcements = cast(CorporateActionsSet, corporate_actions_client.get_corporate_actions(request))
+
         if not announcements or not announcements.data:
             return "No corporate announcements found for the specified criteria."
         
@@ -1780,8 +1797,8 @@ async def get_option_contracts(
         )
         
         # Execute API call
-        response = trade_client.get_option_contracts(request)
-        
+        response = cast(OptionContractsResponse, trade_client.get_option_contracts(request))
+
         if not response or not response.option_contracts:
             return f"No option contracts found for {underlying_symbol}."
         
@@ -2015,7 +2032,7 @@ def _validate_option_order_inputs(legs: List[Dict[str, Any]], quantity: int, tim
     
     return None
 
-def _convert_order_class_string(order_class: Optional[Union[str, OrderClass]]) -> Union[OrderClass, str]:
+def _convert_order_class_string(order_class: Optional[Union[str, OrderClass]]) -> Union[OrderClass, str] | None:
     """Convert order class string to enum if needed."""
     if order_class is None:
         return order_class
@@ -2370,7 +2387,7 @@ async def place_option_market_order(
         # Determine order class if not provided
         if order_class is None:
             order_class = OrderClass.MLEG if len(legs) > 1 else OrderClass.SIMPLE
-        
+        order_class = cast(OrderClass, order_class)
         # Process legs
         processed_legs = _process_option_legs(legs)
         if isinstance(processed_legs, str):  # Error message returned
@@ -2383,12 +2400,13 @@ async def place_option_market_order(
         )
         
         # Submit order
-        order = trade_client.submit_order(order_data)
-        
+        order = cast(Order, trade_client.submit_order(order_data))
+
         # Format and return response
         return _format_option_order_response(order, order_class, order_legs)
         
     except APIError as api_error:
+        order_class = cast(OrderClass, order_class)
         return _handle_option_api_error(str(api_error), order_legs, order_class)
         
     except Exception as e:
@@ -2466,9 +2484,9 @@ def parse_timeframe_with_enums(timeframe_str: str) -> Optional[TimeFrame]:
         elif unit in [TimeFrameUnit.Day, TimeFrameUnit.Week, TimeFrameUnit.Month] and amount > 365:
             # Days/weeks/months should be reasonable
             return None
-            
-        return TimeFrame(amount, unit)
-        
+
+        return TimeFrame(amount, cast(TimeFrameUnit, unit))
+
     except (ValueError, AttributeError, TypeError):
         return None
 
@@ -2485,12 +2503,12 @@ if __name__ == "__main__":
     try:
         # Run server with the specified transport
         if args.transport == "http":
-            mcp.settings.host = transport_config["host"]
-            mcp.settings.port = transport_config["port"]
+            fastmcp_settings.host = transport_config["host"]
+            fastmcp_settings.port = int(transport_config["port"])
             mcp.run(transport="streamable-http", log_level=log_level)
         elif args.transport == "sse":
-            mcp.settings.host = transport_config["host"]
-            mcp.settings.port = transport_config["port"]
+            fastmcp_settings.host = transport_config["host"]
+            fastmcp_settings.port = int(transport_config["port"])
             mcp.run(transport="sse", log_level=log_level)
         else:
             mcp.run(transport="stdio", log_level=log_level)
