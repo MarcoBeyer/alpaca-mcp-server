@@ -128,9 +128,9 @@ if oauth_enabled:
         if not github_auth.client_registration_options:
             github_auth.client_registration_options = ClientRegistrationOptions()
         github_auth.client_registration_options.enabled = True
-        github_auth.client_registration_options.default_scopes = ["user"]
+        github_auth.client_registration_options.default_scopes = ["read:user", "user:email", "user"]
         github_auth.client_registration_options.valid_scopes = ["read:user", "user:email", "user"]
-        github_auth._allowed_client_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
+        github_auth._allowed_client_redirect_uris = ["https://claude.ai/api/mcp/auth_callback", "http://localhost:*"]
 
 # Optional: Print detection result for debugging (only in non-PyCharm environments)
 # Only print when running as main script to avoid noise when imported
