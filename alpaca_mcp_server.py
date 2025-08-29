@@ -83,10 +83,9 @@ class AuthMiddleware(Middleware):
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         from fastmcp.server.dependencies import get_access_token
         token = get_access_token()
-        
         # Deny access to restricted tools if not matching user mails env
-        if token and token.claims.get("email") not in os.getenv("ALLOWED_EMAILS", "").split(","):
-            raise ToolError("Access denied: tool requires to be in ALLOWED_EMAILS")
+        if token and token.claims.get("login") not in os.getenv("OAUTH_ALLOWED_USERS", "").split(","):
+            raise ToolError("Access denied: tool requires to be in OAUTH_ALLOWED_USERS")
         
         # Allow other tools to proceed
         return await call_next(context)
