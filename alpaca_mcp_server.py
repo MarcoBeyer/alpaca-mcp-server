@@ -123,7 +123,7 @@ if oauth_enabled:
             client_secret=client_secret,
             base_url=base_url,
             redirect_path=redirect_path,
-            required_scopes=[""]
+            required_scopes=["user"]
         )
         github_auth._allowed_client_redirect_uris = ["https://claude.ai/api/mcp/auth_callback", "http://localhost:*"]
 
