@@ -3,8 +3,9 @@ import re
 import sys
 import time
 from datetime import datetime, timedelta, date
-from typing import Dict, Any, List, Optional, Union, cast
+from typing import Dict, Any, List, Optional, Union, cast, Annotated, Literal
 
+from pydantic import Field
 from dotenv import load_dotenv
 
 from alpaca.common.enums import SupportedCurrencies, Sort
@@ -765,145 +766,42 @@ async def get_orders(status: str = "all", limit: int = 10) -> str:
     except Exception as e:
         return f"Error fetching orders: {str(e)}"
 
-@mcp.tool()
-async def place_stock_order(
-    symbol: str,
-    side: str,
-    quantity: float,
-    order_type: str = "market",
-    time_in_force: str = "day",
-    limit_price: float | None = None,
-    stop_price: float | None = None,
-    trail_price: float | None = None,
-    trail_percent: float | None = None,
-    extended_hours: bool = False,
-    client_order_id: str | None = None
-) -> str:
-    """
-    Places an order of any supported type (MARKET, LIMIT, STOP, STOP_LIMIT, TRAILING_STOP) using the correct Alpaca request class.
+# Helper function for common order validation and formatting
+def _validate_order_side(side: str):
+    """Validate and convert order side to enum."""
+    if side.lower() == "buy":
+        return OrderSide.BUY
+    elif side.lower() == "sell":
+        return OrderSide.SELL
+    else:
+        raise ValueError(f"Invalid order side: {side}. Must be 'buy' or 'sell'.")
 
-    Args:
-        symbol (str): Stock ticker symbol (e.g., AAPL, MSFT)
-        side (str): Order side (buy or sell)
-        quantity (float): Number of shares to buy or sell
-        order_type (str): Order type (MARKET, LIMIT, STOP, STOP_LIMIT, TRAILING_STOP). Default is MARKET.
-        time_in_force (str): Time in force for the order. Valid options for equity trading: 
-            DAY, GTC, OPG, CLS, IOC, FOK (default: DAY)
-        limit_price (float): Limit price (required for LIMIT, STOP_LIMIT)
-        stop_price (float): Stop price (required for STOP, STOP_LIMIT)
-        trail_price (float): Trail price (for TRAILING_STOP)
-        trail_percent (float): Trail percent (for TRAILING_STOP)
-        extended_hours (bool): Allow execution during extended hours (default: False)
-        client_order_id (str): Optional custom identifier for the order
-
-    Returns:
-        str: Formatted string containing order details or error message.
-    """
-    try:
-        # Validate side
-        if side.lower() == "buy":
-            order_side = OrderSide.BUY
-        elif side.lower() == "sell":
-            order_side = OrderSide.SELL
+def _validate_time_in_force(time_in_force: str):
+    """Validate and convert time_in_force to enum."""
+    if isinstance(time_in_force, TimeInForce):
+        return time_in_force
+    elif isinstance(time_in_force, str):
+        time_in_force_upper = time_in_force.upper()
+        if time_in_force_upper == "DAY":
+            return TimeInForce.DAY
+        elif time_in_force_upper == "GTC":
+            return TimeInForce.GTC
+        elif time_in_force_upper == "OPG":
+            return TimeInForce.OPG
+        elif time_in_force_upper == "CLS":
+            return TimeInForce.CLS
+        elif time_in_force_upper == "IOC":
+            return TimeInForce.IOC
+        elif time_in_force_upper == "FOK":
+            return TimeInForce.FOK
         else:
-            return f"Invalid order side: {side}. Must be 'buy' or 'sell'."
+            raise ValueError(f"Invalid time_in_force: {time_in_force}. Valid options are: DAY, GTC, OPG, CLS, IOC, FOK")
+    else:
+        raise ValueError(f"Invalid time_in_force type: {type(time_in_force)}. Must be string or TimeInForce enum.")
 
-        # Validate and convert time_in_force to enum
-        tif_enum = None
-        if isinstance(time_in_force, TimeInForce):
-            tif_enum = time_in_force
-        elif isinstance(time_in_force, str):
-            # Convert string to TimeInForce enum
-            time_in_force_upper = time_in_force.upper()
-            if time_in_force_upper == "DAY":
-                tif_enum = TimeInForce.DAY
-            elif time_in_force_upper == "GTC":
-                tif_enum = TimeInForce.GTC
-            elif time_in_force_upper == "OPG":
-                tif_enum = TimeInForce.OPG
-            elif time_in_force_upper == "CLS":
-                tif_enum = TimeInForce.CLS
-            elif time_in_force_upper == "IOC":
-                tif_enum = TimeInForce.IOC
-            elif time_in_force_upper == "FOK":
-                tif_enum = TimeInForce.FOK
-            else:
-                return f"Invalid time_in_force: {time_in_force}. Valid options are: DAY, GTC, OPG, CLS, IOC, FOK"
-        else:
-            return f"Invalid time_in_force type: {type(time_in_force)}. Must be string or TimeInForce enum."
-
-        # Validate order_type
-        order_type_upper = order_type.upper()
-        if order_type_upper == "MARKET":
-            order_data = MarketOrderRequest(
-                symbol=symbol,
-                qty=quantity,
-                side=order_side,
-                type=OrderType.MARKET,
-                time_in_force=tif_enum,
-                extended_hours=extended_hours,
-                client_order_id=client_order_id or f"order_{int(time.time())}"
-            )
-        elif order_type_upper == "LIMIT":
-            if limit_price is None:
-                return "limit_price is required for LIMIT orders."
-            order_data = LimitOrderRequest(
-                symbol=symbol,
-                qty=quantity,
-                side=order_side,
-                type=OrderType.LIMIT,
-                time_in_force=tif_enum,
-                limit_price=limit_price,
-                extended_hours=extended_hours,
-                client_order_id=client_order_id or f"order_{int(time.time())}"
-            )
-        elif order_type_upper == "STOP":
-            if stop_price is None:
-                return "stop_price is required for STOP orders."
-            order_data = StopOrderRequest(
-                symbol=symbol,
-                qty=quantity,
-                side=order_side,
-                type=OrderType.STOP,
-                time_in_force=tif_enum,
-                stop_price=stop_price,
-                extended_hours=extended_hours,
-                client_order_id=client_order_id or f"order_{int(time.time())}"
-            )
-        elif order_type_upper == "STOP_LIMIT":
-            if stop_price is None or limit_price is None:
-                return "Both stop_price and limit_price are required for STOP_LIMIT orders."
-            order_data = StopLimitOrderRequest(
-                symbol=symbol,
-                qty=quantity,
-                side=order_side,
-                type=OrderType.STOP_LIMIT,
-                time_in_force=tif_enum,
-                stop_price=stop_price,
-                limit_price=limit_price,
-                extended_hours=extended_hours,
-                client_order_id=client_order_id or f"order_{int(time.time())}"
-            )
-        elif order_type_upper == "TRAILING_STOP":
-            if trail_price is None and trail_percent is None:
-                return "Either trail_price or trail_percent is required for TRAILING_STOP orders."
-            order_data = TrailingStopOrderRequest(
-                symbol=symbol,
-                qty=quantity,
-                side=order_side,
-                type=OrderType.TRAILING_STOP,
-                time_in_force=tif_enum,
-                trail_price=trail_price,
-                trail_percent=trail_percent,
-                extended_hours=extended_hours,
-                client_order_id=client_order_id or f"order_{int(time.time())}"
-            )
-        else:
-            return f"Invalid order type: {order_type}. Must be one of: MARKET, LIMIT, STOP, STOP_LIMIT, TRAILING_STOP."
-
-        # Submit order
-        order = cast(Order, trade_client.submit_order(order_data))
-        return f"""
+def _format_order_response(order: Order) -> str:
+    """Format order response for display."""
+    return f"""
                 Stock Order Placed Successfully:
                 --------------------------------
                 asset_class: {order.asset_class}
@@ -942,20 +840,249 @@ async def place_stock_order(
                 type: {order.type}
                 updated_at: {order.updated_at}
                 """
+
+@mcp.tool()
+async def place_market_order(
+    symbol: Annotated[str, Field(description="Stock ticker symbol (e.g., AAPL, MSFT)")],
+    side: Annotated[Literal["buy", "sell"], Field(description="Order side - either 'buy' or 'sell'")],
+    quantity: Annotated[float, Field(description="Number of shares to buy or sell", gt=0)],
+    time_in_force: Annotated[Literal["day", "gtc", "opg", "cls", "ioc", "fok"], Field(description="Time in force for the order")] = "day",
+    extended_hours: Annotated[bool, Field(description="Allow execution during extended hours")] = False,
+    client_order_id: Annotated[str | None, Field(description="Optional custom identifier for the order")] = None
+) -> str:
+    """
+    Place a market order for stocks.
+
+    Args:
+        symbol (str): Stock ticker symbol (e.g., AAPL, MSFT)
+        side (str): Order side (buy or sell)
+        quantity (float): Number of shares to buy or sell
+        time_in_force (str): Time in force for the order. Valid options: DAY, GTC, OPG, CLS, IOC, FOK (default: DAY)
+        extended_hours (bool): Allow execution during extended hours (default: False)
+        client_order_id (str): Optional custom identifier for the order
+
+    Returns:
+        str: Formatted string containing order details or error message.
+    """
+    try:
+        order_side = _validate_order_side(side)
+        tif_enum = _validate_time_in_force(time_in_force)
+
+        order_data = MarketOrderRequest(
+            symbol=symbol,
+            qty=quantity,
+            side=order_side,
+            type=OrderType.MARKET,
+            time_in_force=tif_enum,
+            extended_hours=extended_hours,
+            client_order_id=client_order_id or f"market_order_{int(time.time())}"
+        )
+
+        order = cast(Order, trade_client.submit_order(order_data))
+        return _format_order_response(order)
     except Exception as e:
-        return f"Error placing order: {str(e)}"
+        return f"Error placing market order: {str(e)}"
+
+@mcp.tool()
+async def place_limit_order(
+    symbol: Annotated[str, Field(description="Stock ticker symbol (e.g., AAPL, MSFT)")],
+    side: Annotated[Literal["buy", "sell"], Field(description="Order side - either 'buy' or 'sell'")],
+    quantity: Annotated[float, Field(description="Number of shares to buy or sell", gt=0)],
+    limit_price: Annotated[float, Field(description="The limit price for the order", gt=0)],
+    time_in_force: Annotated[Literal["day", "gtc", "opg", "cls", "ioc", "fok"], Field(description="Time in force for the order")] = "day",
+    extended_hours: Annotated[bool, Field(description="Allow execution during extended hours")] = False,
+    client_order_id: Annotated[str | None, Field(description="Optional custom identifier for the order")] = None
+) -> str:
+    """
+    Place a limit order for stocks.
+
+    Args:
+        symbol (str): Stock ticker symbol (e.g., AAPL, MSFT)
+        side (str): Order side (buy or sell)
+        quantity (float): Number of shares to buy or sell
+        limit_price (float): The limit price for the order
+        time_in_force (str): Time in force for the order. Valid options: DAY, GTC, OPG, CLS, IOC, FOK (default: DAY)
+        extended_hours (bool): Allow execution during extended hours (default: False)
+        client_order_id (str): Optional custom identifier for the order
+
+    Returns:
+        str: Formatted string containing order details or error message.
+    """
+    try:
+        order_side = _validate_order_side(side)
+        tif_enum = _validate_time_in_force(time_in_force)
+
+        order_data = LimitOrderRequest(
+            symbol=symbol,
+            qty=quantity,
+            side=order_side,
+            type=OrderType.LIMIT,
+            time_in_force=tif_enum,
+            limit_price=limit_price,
+            extended_hours=extended_hours,
+            client_order_id=client_order_id or f"limit_order_{int(time.time())}"
+        )
+
+        order = cast(Order, trade_client.submit_order(order_data))
+        return _format_order_response(order)
+    except Exception as e:
+        return f"Error placing limit order: {str(e)}"
+
+@mcp.tool()
+async def place_stop_order(
+    symbol: Annotated[str, Field(description="Stock ticker symbol (e.g., AAPL, MSFT)")],
+    side: Annotated[Literal["buy", "sell"], Field(description="Order side - either 'buy' or 'sell'")],
+    quantity: Annotated[float, Field(description="Number of shares to buy or sell", gt=0)],
+    stop_price: Annotated[float, Field(description="The stop price for the order", gt=0)],
+    time_in_force: Annotated[Literal["day", "gtc", "opg", "cls", "ioc", "fok"], Field(description="Time in force for the order")] = "day",
+    extended_hours: Annotated[bool, Field(description="Allow execution during extended hours")] = False,
+    client_order_id: Annotated[str | None, Field(description="Optional custom identifier for the order")] = None
+) -> str:
+    """
+    Place a stop order for stocks.
+
+    Args:
+        symbol (str): Stock ticker symbol (e.g., AAPL, MSFT)
+        side (str): Order side (buy or sell)
+        quantity (float): Number of shares to buy or sell
+        stop_price (float): The stop price for the order
+        time_in_force (str): Time in force for the order. Valid options: DAY, GTC, OPG, CLS, IOC, FOK (default: DAY)
+        extended_hours (bool): Allow execution during extended hours (default: False)
+        client_order_id (str): Optional custom identifier for the order
+
+    Returns:
+        str: Formatted string containing order details or error message.
+    """
+    try:
+        order_side = _validate_order_side(side)
+        tif_enum = _validate_time_in_force(time_in_force)
+
+        order_data = StopOrderRequest(
+            symbol=symbol,
+            qty=quantity,
+            side=order_side,
+            type=OrderType.STOP,
+            time_in_force=tif_enum,
+            stop_price=stop_price,
+            extended_hours=extended_hours,
+            client_order_id=client_order_id or f"stop_order_{int(time.time())}"
+        )
+
+        order = cast(Order, trade_client.submit_order(order_data))
+        return _format_order_response(order)
+    except Exception as e:
+        return f"Error placing stop order: {str(e)}"
+
+@mcp.tool()
+async def place_stop_limit_order(
+    symbol: Annotated[str, Field(description="Stock ticker symbol (e.g., AAPL, MSFT)")],
+    side: Annotated[Literal["buy", "sell"], Field(description="Order side - either 'buy' or 'sell'")],
+    quantity: Annotated[float, Field(description="Number of shares to buy or sell", gt=0)],
+    stop_price: Annotated[float, Field(description="The stop price for the order", gt=0)],
+    limit_price: Annotated[float, Field(description="The limit price for the order", gt=0)],
+    time_in_force: Annotated[Literal["day", "gtc", "opg", "cls", "ioc", "fok"], Field(description="Time in force for the order")] = "day",
+    extended_hours: Annotated[bool, Field(description="Allow execution during extended hours")] = False,
+    client_order_id: Annotated[str | None, Field(description="Optional custom identifier for the order")] = None
+) -> str:
+    """
+    Place a stop-limit order for stocks.
+
+    Args:
+        symbol (str): Stock ticker symbol (e.g., AAPL, MSFT)
+        side (str): Order side (buy or sell)
+        quantity (float): Number of shares to buy or sell
+        stop_price (float): The stop price for the order
+        limit_price (float): The limit price for the order
+        time_in_force (str): Time in force for the order. Valid options: DAY, GTC, OPG, CLS, IOC, FOK (default: DAY)
+        extended_hours (bool): Allow execution during extended hours (default: False)
+        client_order_id (str): Optional custom identifier for the order
+
+    Returns:
+        str: Formatted string containing order details or error message.
+    """
+    try:
+        order_side = _validate_order_side(side)
+        tif_enum = _validate_time_in_force(time_in_force)
+
+        order_data = StopLimitOrderRequest(
+            symbol=symbol,
+            qty=quantity,
+            side=order_side,
+            type=OrderType.STOP_LIMIT,
+            time_in_force=tif_enum,
+            stop_price=stop_price,
+            limit_price=limit_price,
+            extended_hours=extended_hours,
+            client_order_id=client_order_id or f"stop_limit_order_{int(time.time())}"
+        )
+
+        order = cast(Order, trade_client.submit_order(order_data))
+        return _format_order_response(order)
+    except Exception as e:
+        return f"Error placing stop-limit order: {str(e)}"
+
+@mcp.tool()
+async def place_trailing_stop_order(
+    symbol: Annotated[str, Field(description="Stock ticker symbol (e.g., AAPL, MSFT)")],
+    side: Annotated[Literal["buy", "sell"], Field(description="Order side - either 'buy' or 'sell'")],
+    quantity: Annotated[float, Field(description="Number of shares to buy or sell", gt=0)],
+    trail_price: Annotated[float | None, Field(description="Trail price in dollars (either trail_price or trail_percent must be specified)", gt=0)] = None,
+    trail_percent: Annotated[float | None, Field(description="Trail percent as a decimal (e.g., 0.05 for 5%) - either trail_price or trail_percent must be specified", gt=0, le=1)] = None,
+    time_in_force: Annotated[Literal["day", "gtc", "opg", "cls", "ioc", "fok"], Field(description="Time in force for the order")] = "day",
+    extended_hours: Annotated[bool, Field(description="Allow execution during extended hours")] = False,
+    client_order_id: Annotated[str | None, Field(description="Optional custom identifier for the order")] = None
+) -> str:
+    """
+    Place a trailing stop order for stocks.
+
+    Args:
+        symbol (str): Stock ticker symbol (e.g., AAPL, MSFT)
+        side (str): Order side (buy or sell)
+        quantity (float): Number of shares to buy or sell
+        trail_price (float): Trail price (either trail_price or trail_percent must be specified)
+        trail_percent (float): Trail percent (either trail_price or trail_percent must be specified)
+        time_in_force (str): Time in force for the order. Valid options: DAY, GTC, OPG, CLS, IOC, FOK (default: DAY)
+        extended_hours (bool): Allow execution during extended hours (default: False)
+        client_order_id (str): Optional custom identifier for the order
+
+    Returns:
+        str: Formatted string containing order details or error message.
+    """
+    try:
+        if trail_price is None and trail_percent is None:
+            return "Either trail_price or trail_percent is required for trailing stop orders."
+
+        order_side = _validate_order_side(side)
+        tif_enum = _validate_time_in_force(time_in_force)
+
+        order_data = TrailingStopOrderRequest(
+            symbol=symbol,
+            qty=quantity,
+            side=order_side,
+            type=OrderType.TRAILING_STOP,
+            time_in_force=tif_enum,
+            trail_price=trail_price,
+            trail_percent=trail_percent,
+            extended_hours=extended_hours,
+            client_order_id=client_order_id or f"trailing_stop_order_{int(time.time())}"
+        )
+
+        order = cast(Order, trade_client.submit_order(order_data))
+        return _format_order_response(order)
+    except Exception as e:
+        return f"Error placing trailing stop order: {str(e)}"
 
 @mcp.tool()
 async def place_crypto_order(
-    symbol: str,
-    side: str,
-    order_type: str = "market",
-    time_in_force: Union[str, TimeInForce] = "gtc",
-    qty: Optional[float] = None,
-    notional: Optional[float] = None,
-    limit_price: Optional[float] = None,
-    stop_price: Optional[float] = None,
-    client_order_id: Optional[str] = None
+    symbol: Annotated[str, Field(description="Crypto ticker symbol (e.g., BTCUSD, ETHUSD)")],
+    side: Annotated[Literal["buy", "sell"], Field(description="Order side - either 'buy' or 'sell'")],
+    order_type: Annotated[Literal["market", "limit", "stop_limit"], Field(description="Order type")] = "market",
+    time_in_force: Annotated[Literal["gtc", "ioc"], Field(description="Time in force - 'gtc' (Good Till Canceled) or 'ioc' (Immediate or Cancel)")] = "gtc",
+    qty: Annotated[Optional[float], Field(description="Quantity of crypto to buy/sell (required for qty-based orders)", gt=0)] = None,
+    notional: Annotated[Optional[float], Field(description="Notional value in USD (required for notional-based orders)", gt=0)] = None,
+    limit_price: Annotated[Optional[float], Field(description="Limit price (required for limit and stop_limit orders)", gt=0)] = None,
+    stop_price: Annotated[Optional[float], Field(description="Stop price (required for stop_limit orders)", gt=0)] = None,
+    client_order_id: Annotated[Optional[str], Field(description="Optional custom identifier for the order")] = None
 ) -> str:
     """
     Place a crypto order (market, limit, stop_limit) with GTC/IOC TIF.

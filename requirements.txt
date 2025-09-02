@@ -1,4 +1,4 @@
 alpaca-py
 python-dotenv
 httpx>=0.27.1
-fastmcp @ git+https://github.com/jlowin/fastmcp.git@main
+fastmcp >= 2.12.0
