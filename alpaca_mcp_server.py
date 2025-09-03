@@ -32,6 +32,8 @@ from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import (
     AssetStatus,
+    AssetClass,
+    AssetExchange,
     ContractType,
     OrderClass,
     OrderSide,
@@ -1262,20 +1264,16 @@ async def cancel_order_by_id(order_id: str) -> str:
     """
     try:
         # Cancel the specific order
-        response = trade_client.cancel_order_by_id(order_id)
+        trade_client.cancel_order_by_id(order_id)
         
         # Format the response
-        status = "Success" if response.status == 200 else "Failed"
+        status = "Success"
         result = f"""
         Order Cancellation Result:
         ------------------------
-        Order ID: {response.id}
+        Order ID: {order_id}
         Status: {status}
-        """
-        
-        if response.body:
-            result += f"Details: {response.body}\n"
-            
+        """ 
         return result
         
     except Exception as e:
@@ -1430,9 +1428,9 @@ async def get_asset_info(symbol: str) -> str:
 
 @mcp.tool()
 async def get_all_assets(
-    status: Optional[str] = None,
-    asset_class: Optional[str] = None,
-    exchange: Optional[str] = None,
+    status: Optional[AssetStatus] = None,
+    asset_class: Optional[AssetClass] = None,
+    exchange: Optional[AssetExchange] = None,
     attributes: Optional[str] = None
 ) -> str:
     """
@@ -1673,38 +1671,49 @@ async def get_corporate_announcements(
                 if hasattr(action, 'corporate_action_type'):
                     result += f"Type: {action.corporate_action_type}\n"
                 
-                if hasattr(action, 'ex_date') and action.ex_date:
-                    result += f"Ex Date: {action.ex_date}\n"
+                ex_date = getattr(action, 'ex_date', None)
+                if ex_date:
+                    result += f"Ex Date: {ex_date}\n"
                     
-                if hasattr(action, 'record_date') and action.record_date:
-                    result += f"Record Date: {action.record_date}\n"
+                record_date = getattr(action, 'record_date', None)
+                if record_date:
+                    result += f"Record Date: {record_date}\n"
                     
-                if hasattr(action, 'payable_date') and action.payable_date:
-                    result += f"Payable Date: {action.payable_date}\n"
+                payable_date = getattr(action, 'payable_date', None)
+                if payable_date:
+                    result += f"Payable Date: {payable_date}\n"
                     
-                if hasattr(action, 'process_date') and action.process_date:
-                    result += f"Process Date: {action.process_date}\n"
+                process_date = getattr(action, 'process_date', None)
+                if process_date:
+                    result += f"Process Date: {process_date}\n"
                 
                 # Cash dividend specific fields
-                if hasattr(action, 'rate') and action.rate:
-                    result += f"Rate: ${action.rate:.6f}\n"
+                rate = getattr(action, 'rate', None)
+                if rate:
+                    result += f"Rate: ${rate:.6f}\n"
                     
-                if hasattr(action, 'foreign') and hasattr(action, 'special'):
-                    result += f"Foreign: {action.foreign}, Special: {action.special}\n"
+                foreign = getattr(action, 'foreign', None)
+                special = getattr(action, 'special', None)
+                if foreign is not None and special is not None:
+                    result += f"Foreign: {foreign}, Special: {special}\n"
                 
                 # Split specific fields
-                if hasattr(action, 'old_rate') and action.old_rate:
-                    result += f"Old Rate: {action.old_rate}\n"
+                old_rate = getattr(action, 'old_rate', None)
+                if old_rate:
+                    result += f"Old Rate: {old_rate}\n"
                     
-                if hasattr(action, 'new_rate') and action.new_rate:
-                    result += f"New Rate: {action.new_rate}\n"
+                new_rate = getattr(action, 'new_rate', None)
+                if new_rate:
+                    result += f"New Rate: {new_rate}\n"
                 
                 # Due bill dates
-                if hasattr(action, 'due_bill_on_date') and action.due_bill_on_date:
-                    result += f"Due Bill On Date: {action.due_bill_on_date}\n"
+                due_bill_on_date = getattr(action, 'due_bill_on_date', None)
+                if due_bill_on_date:
+                    result += f"Due Bill On Date: {due_bill_on_date}\n"
                     
-                if hasattr(action, 'due_bill_off_date') and action.due_bill_off_date:
-                    result += f"Due Bill Off Date: {action.due_bill_off_date}\n"
+                due_bill_off_date = getattr(action, 'due_bill_off_date', None)
+                if due_bill_off_date:
+                    result += f"Due Bill Off Date: {due_bill_off_date}\n"
                 
                 result += "\n"
         return result
